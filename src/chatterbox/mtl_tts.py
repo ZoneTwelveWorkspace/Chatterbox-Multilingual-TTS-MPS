@@ -197,7 +197,7 @@ class ChatterboxMultilingualTTS:
                 repo_id=REPO_ID,
                 repo_type="model",
                 revision="main", 
-                allow_patterns=["ve.pt", "t3_23ls_v2.safetensors", "s3gen.pt", "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json"],
+                allow_patterns=["ve.pt", "t3_mtl23ls_v2.safetensors", "s3gen.pt", "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json"],
                 token=os.getenv("HF_TOKEN"),
             )
         )
