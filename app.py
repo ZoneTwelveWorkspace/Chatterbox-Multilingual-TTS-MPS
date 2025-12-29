@@ -4,7 +4,15 @@ import gradio as gr
 import numpy as np
 import torch
 
+from src.chatterbox.enhanced_tts import (
+    EnhancedTTS,
+    GenerationResult,
+    TTSGenerationConfig,
+    create_enhanced_tts,
+    generate_speech,
+)
 from src.chatterbox.mtl_tts import SUPPORTED_LANGUAGES, ChatterboxMultilingualTTS
+from src.chatterbox.text_chunker import chunk_text_with_info, smart_chunk_text
 
 # Device detection with MPS support for Apple Silicon Macs
 DEVICE = (
@@ -16,6 +24,7 @@ print(f"🚀 Running on device: {DEVICE}")
 
 # --- Global Model Initialization ---
 MODEL = None
+ENHANCED_TTS = None  # Enhanced TTS with text chunking support
 
 LANGUAGE_CONFIG = {
     "ar": {
@@ -144,7 +153,7 @@ def get_supported_languages_display() -> str:
 def get_or_load_model():
     """Loads the ChatterboxMultilingualTTS model if it hasn't been loaded already,
     and ensures it's on the correct device."""
-    global MODEL
+    global MODEL, ENHANCED_TTS
     if MODEL is None:
         print("Model not loaded, initializing...")
         try:
@@ -153,6 +162,16 @@ def get_or_load_model():
             MODEL = ChatterboxMultilingualTTS.from_pretrained(device_obj)
             if hasattr(MODEL, "to") and str(MODEL.device) != DEVICE:
                 MODEL.to(device_obj)
+
+            # Initialize enhanced TTS with chunking support
+            if ENHANCED_TTS is None:
+                ENHANCED_TTS = create_enhanced_tts(
+                    model=MODEL,
+                    device=DEVICE,
+                    logger=None,  # Use default logger
+                )
+                print("Enhanced TTS with text chunking initialized")
+
             print(
                 f"Model loaded successfully. Internal device: {getattr(MODEL, 'device', 'N/A')}"
             )
@@ -206,16 +225,15 @@ def generate_tts_audio(
     cfgw_input: float = 0.5,
 ) -> tuple[int, np.ndarray]:
     """
-    Generate high-quality speech audio from text using Chatterbox Multilingual model with optional reference audio styling.
-    Supported languages: English, French, German, Spanish, Italian, Portuguese, and Hindi.
+    Generate high-quality speech audio from text using enhanced Chatterbox Multilingual model with intelligent text chunking.
+    Supports long texts by automatically splitting them at natural break points and concatenating the generated audio.
 
-    This tool synthesizes natural-sounding speech from input text. When a reference audio file
-    is provided, it captures the speaker's voice characteristics and speaking style. The generated audio
-    maintains the prosody, tone, and vocal qualities of the reference speaker, or uses default voice if no reference is provided.
+    This enhanced version uses smart text chunking to handle texts longer than 300 characters while maintaining
+    natural speech flow. Each chunk is generated separately and then seamlessly concatenated together.
 
     Args:
-        text_input (str): The text to synthesize into speech (maximum 300 characters)
-        language_id (str): The language code for synthesis (eg. en, fr, de, es, it, pt, hi)
+        text_input (str): The text to synthesize into speech (supports unlimited length with automatic chunking)
+        language_id (str): The language code for synthesis (supports all 23 languages)
         audio_prompt_path_input (str, optional): File path or URL to the reference audio file that defines the target voice style. Defaults to None.
         exaggeration_input (float, optional): Controls speech expressiveness (0.25-2.0, neutral=0.5, extreme values may be unstable). Defaults to 0.5.
         temperature_input (float, optional): Controls randomness in generation (0.05-5.0, higher=more varied). Defaults to 0.8.
@@ -225,37 +243,83 @@ def generate_tts_audio(
     Returns:
         tuple[int, np.ndarray]: A tuple containing the sample rate (int) and the generated audio waveform (numpy.ndarray)
     """
-    current_model = get_or_load_model()
+    global ENHANCED_TTS
 
-    if current_model is None:
-        raise RuntimeError("TTS model is not loaded.")
+    # Load model and initialize enhanced TTS if needed
+    if ENHANCED_TTS is None:
+        current_model = get_or_load_model()
+        if current_model is None:
+            raise RuntimeError("TTS model failed to load.")
+
+    if ENHANCED_TTS is None:
+        raise RuntimeError("Enhanced TTS system failed to initialize.")
 
     if seed_num_input != 0:
         set_seed(int(seed_num_input))
 
-    print(f"Generating audio for text: '{text_input[:50]}...'")
-
-    # Handle optional audio prompt
-    chosen_prompt = audio_prompt_path_input or default_audio_for_ui(language_id)
-
-    generate_kwargs = {
-        "exaggeration": exaggeration_input,
-        "temperature": temperature_input,
-        "cfg_weight": cfgw_input,
-    }
-    if chosen_prompt:
-        generate_kwargs["audio_prompt_path"] = chosen_prompt
-        print(f"Using audio prompt: {chosen_prompt}")
-    else:
-        print("No audio prompt provided; using default voice.")
-
-    wav = current_model.generate(
-        text_input[:300],  # Truncate text to max chars
-        language_id=language_id,
-        **generate_kwargs,
+    print(
+        f"🚀 Generating audio with enhanced TTS for text: '{text_input[:50]}{'...' if len(text_input) > 50 else ''}' (length: {len(text_input)} chars)"
     )
-    print("Audio generation complete.")
-    return (current_model.sr, wav.squeeze(0).numpy())
+
+    # Create generation configuration for enhanced TTS
+    config = TTSGenerationConfig(
+        max_chars=300,  # Chunk size
+        language_id=language_id,
+        exaggeration=exaggeration_input,
+        temperature=temperature_input,
+        cfg_weight=cfgw_input,
+        show_progress=True,
+        enable_tqdm=True,
+        concatenate_audio=True,
+        add_silence_between_chunks=0.05,  # 50ms silence between chunks
+    )
+
+    try:
+        # Use enhanced TTS for generation with automatic chunking
+        result = ENHANCED_TTS.generate(text_input, config)
+
+        print(
+            f"✅ Audio generation complete! Generated {result.chunk_count} chunks, duration: {result.duration:.2f}s"
+        )
+
+        # Return in the expected format (sample_rate, audio_data)
+        return (result.sample_rate, result.audio_data.squeeze(0))
+
+    except Exception as e:
+        print(f"❌ Enhanced TTS generation failed: {str(e)}")
+        print("🔄 Falling back to basic model generation...")
+
+        # Fallback to original model for compatibility
+        current_model = get_or_load_model()
+        if current_model is None:
+            raise RuntimeError("TTS model is not loaded.")
+
+        # Handle optional audio prompt for fallback
+        chosen_prompt = audio_prompt_path_input or default_audio_for_ui(language_id)
+
+        generate_kwargs = {
+            "exaggeration": exaggeration_input,
+            "temperature": temperature_input,
+            "cfg_weight": cfgw_input,
+        }
+        if chosen_prompt:
+            generate_kwargs["audio_prompt_path"] = chosen_prompt
+            print(f"Using audio prompt: {chosen_prompt}")
+        else:
+            print("No audio prompt provided; using default voice.")
+
+        # Truncate text to 300 chars for fallback
+        fallback_text = text_input[:300]
+        if len(text_input) > 300:
+            print(f"⚠️ Text truncated to 300 characters for fallback generation")
+
+        wav = current_model.generate(
+            fallback_text,
+            language_id=language_id,
+            **generate_kwargs,
+        )
+        print("Fallback audio generation complete.")
+        return (current_model.sr, wav.squeeze(0).numpy())
 
 
 with gr.Blocks() as demo:
@@ -275,7 +339,7 @@ with gr.Blocks() as demo:
             initial_lang = "fr"
             text = gr.Textbox(
                 value=default_text_for_ui(initial_lang),
-                label="Text to synthesize (max chars 300)",
+                label="Text to synthesize (unlimited length with automatic chunking)",
                 max_lines=5,
             )
 
