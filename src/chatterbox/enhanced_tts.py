@@ -54,6 +54,9 @@ class TTSGenerationConfig:
     min_p: float = 0.05
     top_p: float = 1.0
 
+    # Reference audio for voice cloning
+    reference_audio_path: Optional[str] = None
+
     # Progress tracking
     show_progress: bool = True
     enable_tqdm: bool = True
@@ -82,6 +85,7 @@ class TTSGenerationConfig:
             "concatenate_audio": self.concatenate_audio,
             "add_silence_between_chunks": self.add_silence_between_chunks,
             "sample_rate": self.sample_rate,
+            "reference_audio_path": self.reference_audio_path,
         }
 
 
@@ -219,15 +223,22 @@ class EnhancedTTS:
 
             self.logger.info(f"Text chunked into {len(chunks)} parts")
 
-            # Step 2: Generate audio for each chunk
+            # Step 2: Prepare conditionals if reference audio is provided
+            if config.reference_audio_path:
+                self.logger.info(
+                    f"Preparing conditionals from reference audio: {config.reference_audio_path}"
+                )
+                self._prepare_reference_conditionals(config)
+
+            # Step 3: Generate audio for each chunk
             audio_chunks = self._generate_audio_chunks(job_id, chunks, config)
 
-            # Step 3: Concatenate audio if configured
+            # Step 4: Concatenate audio if configured
             final_audio, final_sample_rate = self._concatenate_audio(
                 job_id, audio_chunks, config
             )
 
-            # Step 4: Create result
+            # Step 5: Create result
             duration = final_audio.shape[-1] / final_sample_rate
             result = GenerationResult(
                 audio_data=final_audio,
@@ -241,6 +252,7 @@ class EnhancedTTS:
                     "generation_config": config.to_dict(),
                     "device": self.device,
                     "concatenated": config.concatenate_audio,
+                    "reference_audio_used": config.reference_audio_path is not None,
                 },
             )
 
@@ -256,6 +268,42 @@ class EnhancedTTS:
             self.logger.error(f"TTS generation failed for job {job_id}: {str(e)}")
             self.progress_tracker.complete_job(job_id, success=False)
             raise
+
+    def _prepare_reference_conditionals(self, config: TTSGenerationConfig):
+        """
+        Prepare reference conditionals from audio file for efficient chunk processing.
+
+        This method prepares the conditionals once and stores them in the model,
+        so they can be reused for all chunks in a generation job. This is much
+        more efficient than preparing conditionals for each chunk individually.
+
+        Args:
+            config: Generation configuration containing reference_audio_path
+        """
+        if not config.reference_audio_path:
+            return
+
+        # Check if model has prepare_conditionals method
+        if hasattr(self.model, "prepare_conditionals"):
+            try:
+                self.logger.info(
+                    f"Preparing conditionals from reference audio: {config.reference_audio_path}"
+                )
+                self.model.prepare_conditionals(
+                    wav_fpath=config.reference_audio_path,
+                    exaggeration=config.exaggeration,
+                )
+                self.logger.info("Reference conditionals prepared successfully")
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to prepare conditionals from reference audio: {str(e)}. "
+                    "Continuing without reference audio conditioning."
+                )
+        else:
+            self.logger.warning(
+                "Model does not support prepare_conditionals method. "
+                "Reference audio will not be used for conditioning."
+            )
 
     def _chunk_text_intelligently(
         self, text: str, config: TTSGenerationConfig
@@ -385,7 +433,7 @@ class EnhancedTTS:
             return self.model.generate(
                 text=text,
                 language_id=config.language_id,
-                audio_prompt_path=None,  # Could be made configurable
+                audio_prompt_path=config.reference_audio_path,
                 exaggeration=config.exaggeration,
                 temperature=config.temperature,
                 cfg_weight=config.cfg_weight,

@@ -261,6 +261,11 @@ def generate_tts_audio(
         f"🚀 Generating audio with enhanced TTS for text: '{text_input[:50]}{'...' if len(text_input) > 50 else ''}' (length: {len(text_input)} chars)"
     )
 
+    # Handle optional audio prompt for enhanced TTS
+    chosen_prompt = audio_prompt_path_input or default_audio_for_ui(language_id)
+    if chosen_prompt:
+        print(f"Using reference audio: {chosen_prompt}")
+
     # Create generation configuration for enhanced TTS
     config = TTSGenerationConfig(
         max_chars=300,  # Chunk size
@@ -268,6 +273,7 @@ def generate_tts_audio(
         exaggeration=exaggeration_input,
         temperature=temperature_input,
         cfg_weight=cfgw_input,
+        reference_audio_path=chosen_prompt,
         show_progress=True,
         enable_tqdm=True,
         concatenate_audio=True,
