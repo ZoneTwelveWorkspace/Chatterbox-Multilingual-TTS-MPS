@@ -1,3 +1,4 @@
+torch>=2.0.0
 gradio
 numpy==1.26.0
 resampy==0.4.3
