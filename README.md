@@ -3,7 +3,7 @@
 **High-quality text-to-speech synthesis supporting 23 languages with Apple Silicon MPS acceleration**
 
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-MPS%20Ready-007AFF?style=flat&logo=apple&logoColor=white)](https://developer.apple.com/metal/)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-MPS%20Supported-007AFF?style=flat&logo=apple&logoColor=white)](https://developer.apple.com/metal/)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat)](LICENSE)
 
