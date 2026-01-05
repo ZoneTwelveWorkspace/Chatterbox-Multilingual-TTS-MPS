@@ -1,0 +1,7 @@
+einops=0.8.1
+conformer==0.3.2
+s3tokenizer==0.3.0
+perth==1.0.0
+gradio==6.2.0
+diffusers==0.36.0
+
