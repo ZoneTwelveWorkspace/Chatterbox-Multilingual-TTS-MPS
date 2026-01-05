@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,8 @@ from .models.s3gen import S3GEN_SR, S3Gen
 from .models.s3tokenizer import S3_SR, drop_invalid_tokens
 from .models.t3 import T3
 from .models.t3.modules.cond_enc import T3Cond
+
+logger = logging.getLogger(__name__)
 from .models.t3.modules.t3_config import T3Config
 from .models.tokenizers import MTLTokenizer
 from .models.voice_encoder import VoiceEncoder
@@ -147,7 +150,18 @@ class ChatterboxMultilingualTTS:
         self.tokenizer = tokenizer
         self.device = device
         self.conds = conds
-        self.watermarker = perth.PerthImplicitWatermarker()
+        # Initialize watermarker with graceful fallback
+        try:
+            self.watermarker = perth.PerthImplicitWatermarker()
+        except AttributeError:
+            # Fallback for different perth versions
+            if hasattr(perth, "Perth"):
+                self.watermarker = perth.Perth()
+            else:
+                self.watermarker = None
+                logger.warning(
+                    "Perth watermarker not available - watermarking disabled"
+                )
 
     @classmethod
     def get_supported_languages(cls):
@@ -313,5 +327,19 @@ class ChatterboxMultilingualTTS:
                 ref_dict=self.conds.gen,
             )
             wav = wav.squeeze(0).detach().cpu().numpy()
-            watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
+            # Apply watermarking with graceful fallback
+            if self.watermarker is not None and hasattr(
+                self.watermarker, "apply_watermark"
+            ):
+                watermarked_wav = self.watermarker.apply_watermark(
+                    wav, sample_rate=self.sr
+                )
+            else:
+                watermarked_wav = wav
+                if self.watermarker is None:
+                    logger.info("Skipping watermarking - watermarker not available")
+                else:
+                    logger.info(
+                        "Skipping watermarking - apply_watermark method not available"
+                    )
         return torch.from_numpy(watermarked_wav).unsqueeze(0)
